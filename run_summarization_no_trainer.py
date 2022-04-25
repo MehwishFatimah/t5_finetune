@@ -533,7 +533,7 @@ def main():
             if args.push_to_hub:
                 repo.push_to_hub(commit_message="End of training", auto_lfs_prune=True)
         
-        with open(os.path.join(args.output_dir, "all_results.json"), "w") as f:
+        with open(os.path.join(args.output_dir, "all_results.json"), "a+") as f:
             json.dump({"eval_rouge1": result["rouge1"], "eval_rouge2": result["rouge2"],
                     "eval_rougeL": result["rougeL"], "eval_rougeLsum": result["rougeLsum"],},f,)
 
