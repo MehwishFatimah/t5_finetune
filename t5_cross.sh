@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=t5c
-#SBATCH --output=/hits/basement/nlp/fatimamh/outputs/t5_summ/cross_exp/out-%j 
-#SBATCH --error=/hits/basement/nlp/fatimamh/outputs/t5_summ/cross_exp/err-%j
+#SBATCH --job-name=t5-c
+#SBATCH --output=/hits/basement/nlp/fatimamh/outputs/t5/cross/out-%j 
+#SBATCH --error=/hits/basement/nlp/fatimamh/outputs/t5/cross/err-%j
 #SBATCH --time=14-00:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
@@ -18,6 +18,6 @@ python run_summarization_no_trainer.py \
     --train_file /hits/basement/nlp/fatimamh/inputs/wiki_t5/cross/train.csv \
     --validation_file /hits/basement/nlp/fatimamh/inputs/wiki_t5/cross/val.csv \
     --source_prefix "summarize: " \
-    --output_dir /hits/basement/nlp/fatimamh/outputs/t5_summ/cross_exp/ \
+    --output_dir /hits/basement/nlp/fatimamh/outputs/t5/cross/ \
     --per_device_train_batch_size=4 \
     --per_device_eval_batch_size=4 \
