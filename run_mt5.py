@@ -57,7 +57,7 @@ class ModelArguments:
     use_fast_tokenizer: bool = field(default=True, metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},)
     model_revision: str = field(default="main", metadata={"help": "The specific model version to use (can be a branch name, tag name or commit id)."},)
     use_auth_token: bool = field(default=False, metadata={"help": "Will use the token generated when running `login` (necessary to use this script with private models)."},)
-    resize_position_embeddings: Optional[bool] = field(default=None, metadata={"help": "Whether to automatically resize the position embeddings if `max_source_length` exceeds "
+    resize_position_embeddings: Optional[bool] = field(default=True, metadata={"help": "Whether to automatically resize the position embeddings if `max_source_length` exceeds "
                                                                                 "the model's position embeddings."},)
 
 """-------------------------------------------------------------------------------------------------------------
@@ -71,7 +71,7 @@ class DataTrainingArguments:
     
     overwrite_cache: bool = field(default=False, metadata={"help": "Overwrite the cached training and evaluation sets"})
     
-    preprocessing_num_workers: Optional[int] = field(default=None, metadata={"help": "The number of processes to use for the preprocessing."},)
+    preprocessing_num_workers: Optional[int] = field(default=8, metadata={"help": "The number of processes to use for the preprocessing."},)
     max_source_length: Optional[int] = field(default=1024, metadata={"help": "The maximum total input sequence length after tokenization. Sequences longer "
                                                                     "than this will be truncated, sequences shorter will be padded."},)
     max_target_length: Optional[int] = field(default=128, metadata={"help": "The maximum total sequence length for target text after tokenization. Sequences longer "
@@ -96,7 +96,7 @@ class DataTrainingArguments:
 
     """-------------------------------------------------------------------------"""
     def __post_init__(self):
-        if self.train_file is None and self.validation_file is None:
+        if self.train_file is None and self.validation_file is None and self.test_file is None:
             raise ValueError("Need either a dataset name or a training/validation file.")
         else:
             if self.train_file is not None:
@@ -104,6 +104,9 @@ class DataTrainingArguments:
                 assert extension in ["csv", "json"], "`train_file` should be a csv or a json file."
             if self.validation_file is not None:
                 extension = self.validation_file.split(".")[-1]
+                assert extension in ["csv", "json"], "`validation_file` should be a csv or a json file."
+            if self.test_file is not None:
+                extension = self.test_file.split(".")[-1]
                 assert extension in ["csv", "json"], "`validation_file` should be a csv or a json file."
         if self.val_max_target_length is None:
             self.val_max_target_length = self.max_target_length
@@ -169,6 +172,7 @@ def main():
             raise ValueError(f"Output directory ({training_args.output_dir}) already exists and is not empty. Use --overwrite_output_dir to overcome.")
         
         elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
+            print('177---last_checkpoint: {}\t resume_from_checkpoint: {}\n'.format(last_checkpoint, training_args.resume_from_checkpoint))
             logger.info(f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
                         "the `--output_dir` or add `--overwrite_output_dir` to train from scratch.")
 
@@ -386,12 +390,14 @@ def main():
     """-------------------------------------------------------------------------"""
     #22. Define metric
     """-------------------------------------------------------------------------"""
-    metric = load_metric("rouge")
+    metric1 = load_metric("rouge")
+    metric2 = load_metric("bertscore")
 
     """-------------------------------------------------------------------------------------------------------------
         TODO
     -------------------------------------------------------------------------------------------------------------"""
     def compute_metrics(eval_preds):
+        result = {}
         preds, labels = eval_preds
         if isinstance(preds, tuple):
             preds = preds[0]
@@ -404,16 +410,46 @@ def main():
         # Some simple post-processing
         decoded_preds, decoded_labels = postprocess_text(decoded_preds, decoded_labels)
 
-        result = metric.compute(predictions=decoded_preds, references=decoded_labels, use_stemmer=True)
-        #print("1.result: {}\n".format(result))
-        # Extract a few results from ROUGE
-        result = {key: value.mid.fmeasure * 100 for key, value in result.items()}
-        #print("2.result: {}\n".format(result))
+        score1 = metric1.compute(predictions=decoded_preds, references=decoded_labels, use_stemmer=True,)
+        #print("1.score: {}\n".format(score1))
         
+        # Extract from ROUGE
+        rouge_names = ["rouge1", "rouge2", "rougeL", "rougeLsum"]
+        for rn in rouge_names:
+            #rdict = {}
+            res = score1[rn].mid
+            f = rn + '_f'
+            result[f] = round(res.fmeasure*100, 2)
+            p = rn + '_p'
+            result[p] = round(res.precision*100, 2)
+            r = rn + '_r'
+            result[r] = round(res.recall*100, 2)
+        
+        #print("1. result: {}\n".format(result))
+        
+        score2 = metric2.compute(predictions=decoded_preds, references=decoded_labels, lang = tgt_lang,)
+        #print("2.score: {}\n".format(score2))
+
+        f = 'bertscore' + '_f'
+        s = score2["f1"]
+        avg = sum(s)/len(s)
+        result[f] = round(avg*100, 2)
+
+        p = 'bertscore' + '_p'
+        s = score2["precision"]
+        avg = sum(s)/len(s)
+        result[p] = round(avg*100, 2)
+
+        r = 'bertscore' + '_r'
+        s = score2["recall"]
+        avg = sum(s)/len(s)
+        result[r] = round(avg*100, 2)
+
+        #print("2. result: {}\n".format(result))
+
         prediction_lens = [np.count_nonzero(pred != tokenizer.pad_token_id) for pred in preds]
         result["gen_len"] = np.mean(prediction_lens)
-        result = {k: round(v, 4) for k, v in result.items()}
-        #print("3.result: {}\n".format(result))
+        #print("3. result: {}\n".format(result))
 
         return result
 
@@ -430,6 +466,7 @@ def main():
     """-------------------------------------------------------------------------"""
     if training_args.do_train:
         checkpoint = None
+        #if args.resume_from_checkpoint is not None or args.resume_from_checkpoint != "":
         if training_args.resume_from_checkpoint is not None:
             checkpoint = training_args.resume_from_checkpoint
         
@@ -445,6 +482,7 @@ def main():
 
         trainer.log_metrics("train", metrics)
         trainer.save_metrics("train", metrics)
+        trainer.state.log_history
         trainer.save_state()
 
 
@@ -475,7 +513,8 @@ def main():
     """-------------------------------------------------------------------------"""
     
     if training_args.do_predict:
-        pred_list, ref_list = [], []
+        #pred_list, ref_list = [], []
+        references, predictions = None, None
         df = pd.DataFrame(columns = ['reference' , 'system'])
         
         logger.info("*** Predict ***")
@@ -489,7 +528,7 @@ def main():
 
         max_predict_samples = (data_args.max_predict_samples if data_args.max_predict_samples is not None else len(predict_dataset))
         metrics["predict_samples"] = min(max_predict_samples, len(predict_dataset))
-        print("metrics[predict_samples]: {}\n".format(metrics["predict_samples"]))        
+        #print("metrics[predict_samples]: {}\n".format(metrics["predict_samples"]))        
         
         trainer.log_metrics("predict", metrics)
         trainer.save_metrics("predict", metrics)
@@ -500,22 +539,19 @@ def main():
                 predictions = tokenizer.batch_decode(predict_results.predictions, skip_special_tokens=True, clean_up_tokenization_spaces=True)
                 predictions = [pred.strip() for pred in predictions]
                 print("predictions: {}\n".format(predictions))
-                pred_list.append(predictions)
-
+                
                 references = predict_results.label_ids
                 references = np.where(references != -100, references, tokenizer.pad_token_id)                
                 references = tokenizer.batch_decode(references, skip_special_tokens=True, clean_up_tokenization_spaces=True)
                 references = [ref.strip() for ref in references]
                 print("references: {}\n".format(references))
-
-                ref_list.append(references)
+                
                 
         output_file = os.path.join(training_args.output_dir, "summaries.csv")
-        df['reference'] = ref_list
-        df['system'] = pred_list
+        df['reference'] = references
+        df['system'] = predictions
         df.to_csv(output_file, index=False)
-        #with open(output_prediction_file, "a+") as writer:
-        #    writer.write("\n".join(predictions))
+        
 
     return results
 
